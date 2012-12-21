@@ -1,0 +1,2 @@
+#every 5 minutes start the reverse-ssh process
+*/5 * * * * /usr/bin/reverse-ssh > /dev/null 2>&1

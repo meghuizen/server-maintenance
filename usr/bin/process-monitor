@@ -1,0 +1,103 @@
+#!/bin/sh
+
+# Environement
+PATH="./:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/local/sbin:/opt/local/bin:/opt/sbin:/opt/bin"
+SCRIPTNAME="`basename "$0"`"
+CURRENTPID="$$"
+CURRENTUSER="`whoami`"
+LOCKFILE="/tmp/process-monitor.lock"
+
+# Functions
+
+mailMessage()
+{
+        sendEmail -t "$MAILTO" -f "$MAILFROM" -u "$SUBJECT" -m "$1" -s "$SMTPSERVER:$SMTPPORT" -q
+}
+
+showError () {
+    echo "ERROR: $1" >&2
+    echo "ERROR: $1" >> "$LOGFILE"
+}
+
+procCheck() {
+    if [ -x "$1" ]; then
+        pidof $2 > /dev/null
+
+        if [ $? != 0 ]; then
+            $1 restart > /dev/null 2>&1
+            echo "Restarting $1"
+        fi
+    fi
+}
+
+# Running code
+
+if [ "`id -u "$CURRENTUSER"`" -gt 0 ]; then
+    showError "can only be run as root"
+    exit 1
+fi
+
+# Check if script is already running
+# See: http://wiki.bash-hackers.org/howto/mutex
+if [ ! -f "$LOCKFILE" ]; then
+    # remove lockfile on exit
+    trap 'rm -f "${LOCKFILE}"; exit $?' INT TERM EXIT
+    
+    # new lockfile
+    echo "$$" > "$LOCKFILE"
+else
+    OTHERPID="`cat "$LOCKFILE"`"
+    
+    if [ -e "/proc/$OTHERPID" ]; then
+        showError "script is already running. Not starting again!"
+        exit
+    else
+        # remove lockfile on exit
+        trap 'rm -f "${LOCKFILE}"; exit $?' INT TERM EXIT
+        
+        # new lockfile
+        echo "$$" > "$LOCKFILE"
+    fi
+fi
+
+
+# Main code
+
+procCheck "/etc/init.d/slapd" "slapd"
+procCheck "/etc/init.d/openldap" "slapd"
+procCheck "/etc/init.d/nscd" "nscd"
+procCheck "/etc/init.d/unscd" "nscd"
+procCheck "/etc/init.d/ssh" "sshd"
+procCheck "/etc/init.d/sshd" "sshd"
+procCheck "/etc/init.d/openssh-server" "sshd"
+procCheck "/etc/init.d/mysql" "mysqld"
+procCheck "/etc/init.d/bind9" "named"
+procCheck "/etc/init.d/apache2" "apache2"
+procCheck "/etc/init.d/httpd" "httpd"
+procCheck "/etc/init.d/samba" "smbd"
+procCheck "/etc/init.d/samba4" "smbd"
+procCheck "/etc/init.d/smbd" "smbd"
+procCheck "/etc/init.d/nmbd" "nmbd"
+procCheck "/etc/init.d/cron" "cron"
+procCheck "/etc/init.d/dhcp3-server" "dhcpd3"
+
+if [ -e "/etc/init.d/squid3" ]; then
+    pidof squid3 > /dev/null
+
+    if [ $? != 0 ]; then
+	    rm -rf /var/spool/squid3/* >/dev/null
+	    squid3 -z > /dev/null
+    fi
+    procCheck "/etc/init.d/squid3" "squid3"
+fi
+
+if [ -e "/etc/init.d/squid" ]; then
+    pidof squid > /dev/null
+
+    if [ $? != 0 ]; then
+	    rm -rf /var/spool/squid/* >/dev/null
+	    squid -z > /dev/null
+    fi
+    procCheck "/etc/init.d/squid" "squid"
+fi
+

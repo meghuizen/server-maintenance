@@ -1,0 +1,121 @@
+#!/bin/sh
+
+# Configuration variables
+REMOTESERVER=""
+REMOTEUSER=""
+SSHARGUMENTS="-v -n -C -g -x -N -R0:127.0.0.1:22"
+
+# OpenSSH > 5.2 will supports port 0 for automatich port selection
+
+# Example for portforwarding
+#SSHARGUMENTS="-v -n -C -g -x -N -R7000:127.0.0.1:22 -R7001:172.16.32.1:80 -R0:172.16.32.11:80"
+
+LOGFILE="/tmp/reverse-ssh.log"
+NETWORKSCRIPT="/etc/init.d/networking restart"
+
+# Environement
+PATH="./:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/local/sbin:/opt/local/bin:/opt/sbin:/opt/bin"
+SCRIPTNAME="`basename "$0"`"
+CURRENTPID="$$"
+CURRENTUSER="`whoami`"
+LOCKFILE="/tmp/reverse-ssh.lock"
+
+
+# Functions
+
+showError () {
+    echo "ERROR: $1" >&2
+    echo "ERROR: $1" >> "$LOGFILE"
+}
+
+procCheck() {
+    if [ -x "$1" ]; then
+        pidof $2 > /dev/null
+
+        if [ $? != 0 ]; then
+            $1 restart > /dev/null 2>&1
+            echo "Restarting $1"
+            echo "Restarting $1" >> "$LOGFILE"
+        fi
+    fi
+}
+
+# Running code
+
+if [ "`id -u "$CURRENTUSER"`" -gt 0 ]; then
+    showError "can only be run as root"
+    exit 1
+fi
+
+# Check if script is already running
+# See: http://wiki.bash-hackers.org/howto/mutex
+if [ ! -f "$LOCKFILE" ]; then
+    # remove lockfile on exit
+    trap 'rm -f "${LOCKFILE}"; exit $?' INT TERM EXIT
+    
+    # new lockfile
+    echo "$$" > "$LOCKFILE"
+else
+    OTHERPID="`cat "$LOCKFILE"`"
+    
+    if [ -e "/proc/$OTHERPID" ]; then
+        showError "script is already running. Not starting again!"
+        exit
+    else
+        # remove lockfile on exit
+        trap 'rm -f "${LOCKFILE}"; exit $?' INT TERM EXIT
+        
+        # new lockfile
+        echo "$$" > "$LOCKFILE"
+    fi
+fi
+
+if [ ! -x "`which ssh`" ]; then
+    showError "couldn't find SSH"
+    exit 1
+fi
+
+if [ -z "$REMOTESERVER" ]; then
+    showError "REMOTESERVER cannot be empty. Please configure this reverse-ssh script."
+    exit 1
+fi
+
+ping -c 1 $REMOTESERVER > /dev/null
+if [ "$?" != "0" ]; then
+    showError "the REMOTESERVER $REMOTESERVER cannot be reached. Is it correct?"
+    exit 1
+fi
+
+
+# Main loop
+while [ true ]; do
+    # new log
+    echo '' > "$LOGFILE"
+    
+    # Process checking
+    procCheck "/etc/init.d/ssh" "sshd"
+    procCheck "/etc/init.d/sshd" "sshd"
+    procCheck "/etc/init.d/openssh-server" "sshd"
+    
+    ping -c 1 $REMOTESERVER > /dev/null
+    
+    # If the server cannot be reached, restart the network configuration and try again
+    if [ "$?" != "0" ]; then
+        $NETWORKSCRIPT > /dev/null 2>&1
+        
+        sleep 5
+        
+        ping -c 1 $REMOTESERVER > /dev/null
+        
+        if [ "$?" != "0" ]; then
+            showError 'No internet connection'
+        fi
+    fi
+    
+
+    SSHCMD="`which ssh`"
+    $SSHCMD -l $REMOTEUSER $SSHARGUMENTS $REMOTESERVER > "$LOGFILE" 2>&1
+    
+    sleep 2
+done
+
